@@ -105,6 +105,26 @@ final class SystemStatusPluginTests: XCTestCase {
         )
     }
 
+    func testMenuBarNetworkMetricStacksDownloadAndUploadWithoutLabel() {
+        var snapshot = SystemStatusSnapshot.empty
+        snapshot.network = SystemStatusNetworkSnapshot(
+            interfaceName: "en0",
+            ipAddress: nil,
+            publicIPAddress: nil,
+            downloadBytesPerSecond: 1_024,
+            uploadBytesPerSecond: 2_048,
+            isConnected: true,
+            isCollecting: false
+        )
+
+        let blocks = SystemStatusMenuBarMetricsFormatter.blocks(snapshot: snapshot, kinds: [.network])
+
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(blocks.first?.kind, .network)
+        XCTAssertEqual(blocks.first?.value, "↓1K")
+        XCTAssertEqual(blocks.first?.secondaryValue, "↑2K")
+    }
+
     func testProductionSamplingScheduleBalancesForegroundDetailAndBackgroundCost() {
         let schedule = SystemStatusSamplingSchedule.production
 
