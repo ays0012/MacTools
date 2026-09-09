@@ -155,7 +155,8 @@ enum SystemStatusMenuBarMetricsFormatter {
         var value = Double(bytesPerSecond)
         var unitIndex = 0
 
-        while value >= 1024, unitIndex < units.count - 1 {
+        // 数值部分不超过 3 个字符（如 999B、1.5K、977K）
+        while value.rounded() >= 1000, unitIndex < units.count - 1 {
             value /= 1024
             unitIndex += 1
         }
