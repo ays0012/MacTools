@@ -5,6 +5,19 @@ struct SystemStatusMenuBarMetricBlock: Equatable {
     let kind: SystemStatusMetricKind
     let label: String
     let value: String
+    let secondaryValue: String?
+
+    init(
+        kind: SystemStatusMetricKind,
+        label: String,
+        value: String,
+        secondaryValue: String? = nil
+    ) {
+        self.kind = kind
+        self.label = label
+        self.value = value
+        self.secondaryValue = secondaryValue
+    }
 }
 
 enum SystemStatusMenuBarMetricsFormatter {
@@ -20,7 +33,7 @@ enum SystemStatusMenuBarMetricsFormatter {
         kinds: [SystemStatusMetricKind]
     ) -> String {
         blocks(snapshot: snapshot, kinds: kinds)
-            .map { "\($0.label) \($0.value)" }
+            .map(summaryText)
             .joined(separator: " | ")
     }
 
@@ -29,12 +42,20 @@ enum SystemStatusMenuBarMetricsFormatter {
         kinds: [SystemStatusMetricKind]
     ) -> String {
         let details = blocks(snapshot: snapshot, kinds: kinds)
-            .map { "\($0.label) \($0.value)" }
+            .map(summaryText)
         guard !details.isEmpty else {
             return "System Status"
         }
 
         return (["System Status"] + details).joined(separator: "\n")
+    }
+
+    private static func summaryText(for block: SystemStatusMenuBarMetricBlock) -> String {
+        var text = "\(block.label) \(block.value)"
+        if let secondaryValue = block.secondaryValue {
+            text += " \(secondaryValue)"
+        }
+        return text
     }
 
     private static func block(
@@ -89,7 +110,8 @@ enum SystemStatusMenuBarMetricsFormatter {
             return SystemStatusMenuBarMetricBlock(
                 kind: kind,
                 label: "NET",
-                value: "↓\(compactSpeed(snapshot.network.downloadBytesPerSecond)) ↑\(compactSpeed(snapshot.network.uploadBytesPerSecond))"
+                value: "↓\(compactSpeed(snapshot.network.downloadBytesPerSecond))",
+                secondaryValue: "↑\(compactSpeed(snapshot.network.uploadBytesPerSecond))"
             )
         case .topProcesses:
             return nil
@@ -133,7 +155,8 @@ enum SystemStatusMenuBarMetricsFormatter {
         var value = Double(bytesPerSecond)
         var unitIndex = 0
 
-        while value >= 1024, unitIndex < units.count - 1 {
+        // 数值部分不超过 3 个字符（如 999B、1.5K、977K）
+        while value.rounded() >= 1000, unitIndex < units.count - 1 {
             value /= 1024
             unitIndex += 1
         }
@@ -209,7 +232,16 @@ final class SystemStatusMenuBarMetricsView: NSView {
         NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
     }
 
+    private var stackedValueFont: NSFont {
+        NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
+    }
+
     private func draw(_ block: SystemStatusMenuBarMetricBlock, in rect: NSRect) {
+        if let secondaryValue = block.secondaryValue {
+            drawStackedValues(block.value, secondaryValue, in: rect)
+            return
+        }
+
         let label = attributedText(
             block.label,
             font: labelFont,
@@ -241,7 +273,52 @@ final class SystemStatusMenuBarMetricsView: NSView {
         value.draw(in: valueRect)
     }
 
+    private func drawStackedValues(_ first: String, _ second: String, in rect: NSRect) {
+        let firstText = attributedText(
+            first,
+            font: stackedValueFont,
+            color: .labelColor
+        )
+        let secondText = attributedText(
+            second,
+            font: stackedValueFont,
+            color: .labelColor
+        )
+
+        let firstSize = firstText.size()
+        let secondSize = secondText.size()
+        let firstRect = NSRect(
+            x: rect.minX + (rect.width - firstSize.width) / 2,
+            y: Layout.topInset,
+            width: firstSize.width,
+            height: firstSize.height
+        )
+        let secondRect = NSRect(
+            x: rect.minX + (rect.width - secondSize.width) / 2,
+            y: max(Layout.topInset + firstSize.height - 1, rect.maxY - secondSize.height - Layout.bottomInset),
+            width: secondSize.width,
+            height: secondSize.height
+        )
+
+        firstText.draw(in: firstRect)
+        secondText.draw(in: secondRect)
+    }
+
     private func metricWidth(_ block: SystemStatusMenuBarMetricBlock) -> CGFloat {
+        if let secondaryValue = block.secondaryValue {
+            let firstWidth = attributedText(
+                block.value,
+                font: stackedValueFont,
+                color: .labelColor
+            ).size().width
+            let secondWidth = attributedText(
+                secondaryValue,
+                font: stackedValueFont,
+                color: .labelColor
+            ).size().width
+            return ceil(max(Layout.minimumMetricWidth, firstWidth, secondWidth))
+        }
+
         let labelWidth = attributedText(
             block.label,
             font: labelFont,

@@ -105,6 +105,60 @@ final class SystemStatusPluginTests: XCTestCase {
         )
     }
 
+    func testMenuBarNetworkMetricStacksDownloadAndUploadWithoutLabel() {
+        var snapshot = SystemStatusSnapshot.empty
+        snapshot.network = SystemStatusNetworkSnapshot(
+            interfaceName: "en0",
+            ipAddress: nil,
+            publicIPAddress: nil,
+            downloadBytesPerSecond: 1_024,
+            uploadBytesPerSecond: 2_048,
+            isConnected: true,
+            isCollecting: false
+        )
+
+        let blocks = SystemStatusMenuBarMetricsFormatter.blocks(snapshot: snapshot, kinds: [.network])
+
+        XCTAssertEqual(blocks.count, 1)
+        XCTAssertEqual(blocks.first?.kind, .network)
+        XCTAssertEqual(blocks.first?.value, "↓1K")
+        XCTAssertEqual(blocks.first?.secondaryValue, "↑2K")
+    }
+
+    func testMenuBarSpeedValuesUseAtMostThreeDigitCharacters() {
+        func snapshot(downloadBytesPerSecond: UInt64) -> SystemStatusSnapshot {
+            var snapshot = SystemStatusSnapshot.empty
+            snapshot.network = SystemStatusNetworkSnapshot(
+                interfaceName: "en0",
+                ipAddress: nil,
+                publicIPAddress: nil,
+                downloadBytesPerSecond: downloadBytesPerSecond,
+                uploadBytesPerSecond: nil,
+                isConnected: true,
+                isCollecting: false
+            )
+            return snapshot
+        }
+
+        let cases: [(UInt64, String)] = [
+            (999, "999B"),
+            (1_000, "1K"),
+            (1_536, "1.5K"),
+            (99_999, "98K"),
+            (999_999, "977K"),
+            (1_023_990, "1M"),
+            (1_999_999, "1.9M"),
+        ]
+
+        for (download, expected) in cases {
+            let blocks = SystemStatusMenuBarMetricsFormatter.blocks(
+                snapshot: snapshot(downloadBytesPerSecond: download),
+                kinds: [.network]
+            )
+            XCTAssertEqual(blocks.first?.value, "↓\(expected)")
+        }
+    }
+
     func testProductionSamplingScheduleBalancesForegroundDetailAndBackgroundCost() {
         let schedule = SystemStatusSamplingSchedule.production
 

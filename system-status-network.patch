@@ -1,0 +1,225 @@
+diff --git a/Plugins/SystemStatus/Sources/SystemStatusMenuBarMetricsController.swift b/Plugins/SystemStatus/Sources/SystemStatusMenuBarMetricsController.swift
+index ae271df..789a50d 100644
+--- a/Plugins/SystemStatus/Sources/SystemStatusMenuBarMetricsController.swift
++++ b/Plugins/SystemStatus/Sources/SystemStatusMenuBarMetricsController.swift
+@@ -5,6 +5,19 @@ struct SystemStatusMenuBarMetricBlock: Equatable {
+     let kind: SystemStatusMetricKind
+     let label: String
+     let value: String
++    let secondaryValue: String?
++
++    init(
++        kind: SystemStatusMetricKind,
++        label: String,
++        value: String,
++        secondaryValue: String? = nil
++    ) {
++        self.kind = kind
++        self.label = label
++        self.value = value
++        self.secondaryValue = secondaryValue
++    }
+ }
+ 
+ enum SystemStatusMenuBarMetricsFormatter {
+@@ -20,7 +33,7 @@ enum SystemStatusMenuBarMetricsFormatter {
+         kinds: [SystemStatusMetricKind]
+     ) -> String {
+         blocks(snapshot: snapshot, kinds: kinds)
+-            .map { "\($0.label) \($0.value)" }
++            .map(summaryText)
+             .joined(separator: " | ")
+     }
+ 
+@@ -29,7 +42,7 @@ enum SystemStatusMenuBarMetricsFormatter {
+         kinds: [SystemStatusMetricKind]
+     ) -> String {
+         let details = blocks(snapshot: snapshot, kinds: kinds)
+-            .map { "\($0.label) \($0.value)" }
++            .map(summaryText)
+         guard !details.isEmpty else {
+             return "System Status"
+         }
+@@ -37,6 +50,14 @@ enum SystemStatusMenuBarMetricsFormatter {
+         return (["System Status"] + details).joined(separator: "\n")
+     }
+ 
++    private static func summaryText(for block: SystemStatusMenuBarMetricBlock) -> String {
++        var text = "\(block.label) \(block.value)"
++        if let secondaryValue = block.secondaryValue {
++            text += " \(secondaryValue)"
++        }
++        return text
++    }
++
+     private static func block(
+         for kind: SystemStatusMetricKind,
+         snapshot: SystemStatusSnapshot
+@@ -89,7 +110,8 @@ enum SystemStatusMenuBarMetricsFormatter {
+             return SystemStatusMenuBarMetricBlock(
+                 kind: kind,
+                 label: "NET",
+-                value: "↓\(compactSpeed(snapshot.network.downloadBytesPerSecond)) ↑\(compactSpeed(snapshot.network.uploadBytesPerSecond))"
++                value: "↓\(compactSpeed(snapshot.network.downloadBytesPerSecond))",
++                secondaryValue: "↑\(compactSpeed(snapshot.network.uploadBytesPerSecond))"
+             )
+         case .topProcesses:
+             return nil
+@@ -133,7 +155,8 @@ enum SystemStatusMenuBarMetricsFormatter {
+         var value = Double(bytesPerSecond)
+         var unitIndex = 0
+ 
+-        while value >= 1024, unitIndex < units.count - 1 {
++        // 数值部分不超过 3 个字符（如 999B、1.5K、977K）
++        while value.rounded() >= 1000, unitIndex < units.count - 1 {
+             value /= 1024
+             unitIndex += 1
+         }
+@@ -209,7 +232,16 @@ final class SystemStatusMenuBarMetricsView: NSView {
+         NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+     }
+ 
++    private var stackedValueFont: NSFont {
++        NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .regular)
++    }
++
+     private func draw(_ block: SystemStatusMenuBarMetricBlock, in rect: NSRect) {
++        if let secondaryValue = block.secondaryValue {
++            drawStackedValues(block.value, secondaryValue, in: rect)
++            return
++        }
++
+         let label = attributedText(
+             block.label,
+             font: labelFont,
+@@ -241,7 +273,52 @@ final class SystemStatusMenuBarMetricsView: NSView {
+         value.draw(in: valueRect)
+     }
+ 
++    private func drawStackedValues(_ first: String, _ second: String, in rect: NSRect) {
++        let firstText = attributedText(
++            first,
++            font: stackedValueFont,
++            color: .labelColor
++        )
++        let secondText = attributedText(
++            second,
++            font: stackedValueFont,
++            color: .labelColor
++        )
++
++        let firstSize = firstText.size()
++        let secondSize = secondText.size()
++        let firstRect = NSRect(
++            x: rect.minX + (rect.width - firstSize.width) / 2,
++            y: Layout.topInset,
++            width: firstSize.width,
++            height: firstSize.height
++        )
++        let secondRect = NSRect(
++            x: rect.minX + (rect.width - secondSize.width) / 2,
++            y: max(Layout.topInset + firstSize.height - 1, rect.maxY - secondSize.height - Layout.bottomInset),
++            width: secondSize.width,
++            height: secondSize.height
++        )
++
++        firstText.draw(in: firstRect)
++        secondText.draw(in: secondRect)
++    }
++
+     private func metricWidth(_ block: SystemStatusMenuBarMetricBlock) -> CGFloat {
++        if let secondaryValue = block.secondaryValue {
++            let firstWidth = attributedText(
++                block.value,
++                font: stackedValueFont,
++                color: .labelColor
++            ).size().width
++            let secondWidth = attributedText(
++                secondaryValue,
++                font: stackedValueFont,
++                color: .labelColor
++            ).size().width
++            return ceil(max(Layout.minimumMetricWidth, firstWidth, secondWidth))
++        }
++
+         let labelWidth = attributedText(
+             block.label,
+             font: labelFont,
+diff --git a/Plugins/SystemStatus/Tests/SystemStatusPluginTests.swift b/Plugins/SystemStatus/Tests/SystemStatusPluginTests.swift
+index fa8571a..eb2cce7 100644
+--- a/Plugins/SystemStatus/Tests/SystemStatusPluginTests.swift
++++ b/Plugins/SystemStatus/Tests/SystemStatusPluginTests.swift
+@@ -105,6 +105,60 @@ final class SystemStatusPluginTests: XCTestCase {
+         )
+     }
+ 
++    func testMenuBarNetworkMetricStacksDownloadAndUploadWithoutLabel() {
++        var snapshot = SystemStatusSnapshot.empty
++        snapshot.network = SystemStatusNetworkSnapshot(
++            interfaceName: "en0",
++            ipAddress: nil,
++            publicIPAddress: nil,
++            downloadBytesPerSecond: 1_024,
++            uploadBytesPerSecond: 2_048,
++            isConnected: true,
++            isCollecting: false
++        )
++
++        let blocks = SystemStatusMenuBarMetricsFormatter.blocks(snapshot: snapshot, kinds: [.network])
++
++        XCTAssertEqual(blocks.count, 1)
++        XCTAssertEqual(blocks.first?.kind, .network)
++        XCTAssertEqual(blocks.first?.value, "↓1K")
++        XCTAssertEqual(blocks.first?.secondaryValue, "↑2K")
++    }
++
++    func testMenuBarSpeedValuesUseAtMostThreeDigitCharacters() {
++        func snapshot(downloadBytesPerSecond: UInt64) -> SystemStatusSnapshot {
++            var snapshot = SystemStatusSnapshot.empty
++            snapshot.network = SystemStatusNetworkSnapshot(
++                interfaceName: "en0",
++                ipAddress: nil,
++                publicIPAddress: nil,
++                downloadBytesPerSecond: downloadBytesPerSecond,
++                uploadBytesPerSecond: nil,
++                isConnected: true,
++                isCollecting: false
++            )
++            return snapshot
++        }
++
++        let cases: [(UInt64, String)] = [
++            (999, "999B"),
++            (1_000, "1K"),
++            (1_536, "1.5K"),
++            (99_999, "98K"),
++            (999_999, "977K"),
++            (1_023_990, "1M"),
++            (1_999_999, "1.9M"),
++        ]
++
++        for (download, expected) in cases {
++            let blocks = SystemStatusMenuBarMetricsFormatter.blocks(
++                snapshot: snapshot(downloadBytesPerSecond: download),
++                kinds: [.network]
++            )
++            XCTAssertEqual(blocks.first?.value, "↓\(expected)")
++        }
++    }
++
+     func testProductionSamplingScheduleBalancesForegroundDetailAndBackgroundCost() {
+         let schedule = SystemStatusSamplingSchedule.production
+ 
+diff --git a/changes/unreleased/system-status-network-menu-bar-stacked.md b/changes/unreleased/system-status-network-menu-bar-stacked.md
+new file mode 100644
+index 0000000..edf1a3e
+--- /dev/null
++++ b/changes/unreleased/system-status-network-menu-bar-stacked.md
+@@ -0,0 +1,7 @@
++---
++release: plugin
++type: changed
++area: System Status
++---
++
++The network menu-bar metric no longer shows the "NET" title; download and upload speeds now stack on two lines. Speed readings keep the number to at most three characters (e.g. 1.5K, 977K) so the menu bar stays compact.
